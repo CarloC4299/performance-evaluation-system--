@@ -1,0 +1,1932 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#2563eb">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="绩效评价">
+    <link rel="apple-touch-icon" href="/icons/icon-192.png">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>营销中心季度绩效评价系统 V3.0</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- V3.0: 加分/减分说明独立输入框 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <!-- JSZip for exporting multiple Word files -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }
+        .score-input { width: 70px; text-align: center; }
+        .dimension-card { transition: all 0.3s ease; }
+        .dimension-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .score-level { cursor: pointer; transition: all 0.2s; }
+        .score-level:hover { transform: scale(1.02); }
+        .score-level.selected { border: 2px solid #3b82f6; background-color: #eff6ff; }
+        .fade-in { animation: fadeIn 0.3s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+
+    <script>
+        // CloudBase 变量（延迟初始化）
+        let app, auth, db, _;
+        
+
+        
+        // 云端API配置
+        const CLOUD_API = 'https://nrc-d9g7ub4ufcb9670b4-1429666062.ap-shanghai.app.tcloudbase.com/api';
+        
+        // 调用云端API
+        async function callCloudAPI(action, data = {}) {
+            try {
+                const response = await fetch(CLOUD_API, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action, ...data })
+                });
+                const result = await response.json();
+                return result;
+            } catch (err) {
+                console.error('云端API调用失败:', err);
+                return { code: -1, error: err.message };
+            }
+        }
+        
+        // 初始化云服务
+        async function initCloud() {
+            try {
+                // 测试API连接
+                const result = await callCloudAPI('getEmployees');
+                if (result.code === 0) {
+                    console.log('云端API连接成功');
+                    updateSyncStatus('connected');
+                    return true;
+                } else {
+                    console.error('云端API连接失败:', result);
+                    updateSyncStatus('disconnected');
+                    return false;
+                }
+            } catch (err) {
+                console.error('云服务初始化失败:', err);
+                updateSyncStatus('disconnected');
+                return false;
+            }
+        }
+        
+        // 更新同步状态显示
+        function updateSyncStatus(status) {
+            const statusEl = document.getElementById('syncStatus');
+            if (!statusEl) return;
+            
+            if (status === 'connected') {
+                statusEl.innerHTML = '<span class="w-2 h-2 bg-green-500 rounded-full"></span> 已连接云端';
+                statusEl.className = 'flex items-center gap-1 text-xs px-2 py-1 bg-green-50 text-green-700 rounded-full';
+            } else if (status === 'syncing') {
+                statusEl.innerHTML = '<span class="w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></span> 同步中...';
+                statusEl.className = 'flex items-center gap-1 text-xs px-2 py-1 bg-yellow-50 text-yellow-700 rounded-full';
+            } else if (status === 'synced') {
+                statusEl.innerHTML = '<span class="w-2 h-2 bg-blue-500 rounded-full"></span> 已同步到云端';
+                statusEl.className = 'flex items-center gap-1 text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded-full';
+                // 3秒后恢复为已连接状态
+                setTimeout(() => updateSyncStatus('connected'), 3000);
+            } else {
+                statusEl.innerHTML = '<span class="w-2 h-2 bg-gray-400 rounded-full"></span> 未连接';
+                statusEl.className = 'flex items-center gap-1 text-xs px-2 py-1 bg-gray-50 text-gray-500 rounded-full';
+            }
+        }
+    </script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="max-w-7xl mx-auto px-4 py-6">
+        <!-- 头部 -->
+        <header class="bg-white rounded-xl shadow-sm p-6 mb-6">
+            <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div>
+                    <h1 class="text-2xl font-bold text-gray-800">营销中心季度绩效评价系统 <span class="text-sm bg-green-100 text-green-700 px-2 py-1 rounded">V3.1 PWA</span></h1>
+                    <p class="text-gray-500 mt-1">支持数据导入导出，方便多人协作评分汇总</p>
+                </div>
+                <div class="flex gap-3 flex-wrap">
+                    <button onclick="showEmployeeModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition flex items-center gap-2 whitespace-nowrap">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                        添加员工
+                    </button>
+                    <button onclick="exportToExcel()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition flex items-center gap-2 whitespace-nowrap">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                        全部汇总
+                    </button>
+                    <button onclick="exportSelectedToExcel()" id="btnExportSelectedExcel" class="bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition flex items-center gap-2 whitespace-nowrap opacity-50 cursor-not-allowed" disabled>
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        选中汇总
+                    </button>
+                    <button onclick="exportSelectedConfirmations()" id="btnExportSelectedWord" class="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition flex items-center gap-2 whitespace-nowrap opacity-50 cursor-not-allowed" disabled>
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                        选中确认单
+                    </button>
+                    <button onclick="exportToJSON()" class="bg-orange-600 text-white px-4 py-2 rounded-lg hover:bg-orange-700 transition flex items-center gap-2 whitespace-nowrap">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                        导出打分记录
+                    </button>
+                    <button onclick="document.getElementById('importFileInput').click()" class="bg-teal-600 text-white px-4 py-2 rounded-lg hover:bg-teal-700 transition flex items-center gap-2 whitespace-nowrap">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                        导入打分记录
+                    </button>
+                    <input type="file" id="importFileInput" accept=".json" style="display:none" onchange="importFromJSON(this.files[0])">
+                </div>
+            </div>
+            <div id="syncStatus" class="flex items-center gap-1 text-xs px-2 py-1 bg-gray-50 text-gray-500 rounded-full mt-2">
+                <span class="w-2 h-2 bg-gray-400 rounded-full"></span> 未连接
+            </div>
+        </header>
+
+        <!-- 员工列表 -->
+        <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+            <div class="p-4 border-b border-gray-100 flex justify-between items-center flex-wrap gap-3">
+                <h2 class="text-lg font-semibold text-gray-800">员工列表</h2>
+                <div class="flex items-center gap-3">
+                    <label class="text-sm text-gray-600">选择季度：</label>
+                    <select id="quarterSelect" onchange="onQuarterChange()" class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <option value="2026Q2">2026年 Q2</option>
+                        <option value="2026Q3">2026年 Q3</option>
+                        <option value="2026Q4">2026年 Q4</option>
+                        <option value="2027Q1">2027年 Q1</option>
+                        <option value="2027Q2">2027年 Q2</option>
+                        <option value="2027Q3">2027年 Q3</option>
+                        <option value="2027Q4">2027年 Q4</option>
+                    </select>
+                    <span class="text-sm text-gray-500" id="employeeCount">共 0 人</span>
+                </div>
+            </div>
+            <div class="overflow-x-auto" style="max-height: calc(100vh - 280px); overflow-y: auto;">
+                <table class="w-full">
+                    <thead class="bg-gray-50 sticky top-0 z-10 shadow-sm">
+                        <tr>
+                            <th class="px-2 py-3 text-center text-sm font-medium text-gray-600 bg-gray-50">
+                                <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll()" class="w-4 h-4 text-blue-600 rounded focus:ring-blue-500">
+                            </th>
+                            <th class="px-4 py-3 text-left text-sm font-medium text-gray-600 bg-gray-50">序号</th>
+                            <th class="px-4 py-3 text-left text-sm font-medium text-gray-600 bg-gray-50">岗位</th>
+                            <th class="px-4 py-3 text-left text-sm font-medium text-gray-600 bg-gray-50">姓名</th>
+                            <th class="px-4 py-3 text-center text-sm font-medium text-gray-600 bg-gray-50">季度首月</th>
+                            <th class="px-4 py-3 text-center text-sm font-medium text-gray-600 bg-gray-50">季度次月</th>
+                            <th class="px-4 py-3 text-center text-sm font-medium text-gray-600 bg-gray-50">季度末月</th>
+                            <th class="px-4 py-3 text-center text-sm font-medium text-gray-600 bg-gray-50">季度总评分</th>
+                            <th class="px-4 py-3 text-center text-sm font-medium text-gray-600 bg-gray-50">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="employeeTable" class="divide-y divide-gray-100">
+                        <!-- 动态生成 -->
+                    </tbody>
+                </table>
+            </div>
+            <div id="emptyState" class="p-12 text-center text-gray-400 hidden">
+                <svg class="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                <p>暂无员工数据，请点击"添加员工"开始</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加/编辑员工弹窗 -->
+    <div id="employeeModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-xl max-w-lg w-full p-6 fade-in">
+            <h3 class="text-lg font-semibold mb-4" id="modalTitle">添加员工</h3>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">姓名</label>
+                    <input type="text" id="empName" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="请输入姓名">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">岗位</label>
+                    <select id="empPosition" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <option value="">请选择岗位</option>
+                        <option value="客服助理岗">客服助理岗</option>
+                        <option value="客服专员岗">客服专员岗</option>
+                        <option value="客服主管岗">客服主管岗</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">参与评价的季度</label>
+                    <div class="grid grid-cols-2 gap-2" id="quarterCheckboxes">
+                        <label class="flex items-center gap-2 p-2 border border-gray-200 rounded hover:bg-gray-50 cursor-pointer">
+                            <input type="checkbox" value="2026Q2" class="quarter-checkbox w-4 h-4 text-blue-600 rounded focus:ring-blue-500">
+                            <span class="text-sm">2026年 Q2</span>
+                        </label>
+                        <label class="flex items-center gap-2 p-2 border border-gray-200 rounded hover:bg-gray-50 cursor-pointer">
+                            <input type="checkbox" value="2026Q3" class="quarter-checkbox w-4 h-4 text-blue-600 rounded focus:ring-blue-500">
+                            <span class="text-sm">2026年 Q3</span>
+                        </label>
+                        <label class="flex items-center gap-2 p-2 border border-gray-200 rounded hover:bg-gray-50 cursor-pointer">
+                            <input type="checkbox" value="2026Q4" class="quarter-checkbox w-4 h-4 text-blue-600 rounded focus:ring-blue-500">
+                            <span class="text-sm">2026年 Q4</span>
+                        </label>
+                        <label class="flex items-center gap-2 p-2 border border-gray-200 rounded hover:bg-gray-50 cursor-pointer">
+                            <input type="checkbox" value="2027Q1" class="quarter-checkbox w-4 h-4 text-blue-600 rounded focus:ring-blue-500">
+                            <span class="text-sm">2027年 Q1</span>
+                        </label>
+                        <label class="flex items-center gap-2 p-2 border border-gray-200 rounded hover:bg-gray-50 cursor-pointer">
+                            <input type="checkbox" value="2027Q2" class="quarter-checkbox w-4 h-4 text-blue-600 rounded focus:ring-blue-500">
+                            <span class="text-sm">2027年 Q2</span>
+                        </label>
+                        <label class="flex items-center gap-2 p-2 border border-gray-200 rounded hover:bg-gray-50 cursor-pointer">
+                            <input type="checkbox" value="2027Q3" class="quarter-checkbox w-4 h-4 text-blue-600 rounded focus:ring-blue-500">
+                            <span class="text-sm">2027年 Q3</span>
+                        </label>
+                        <label class="flex items-center gap-2 p-2 border border-gray-200 rounded hover:bg-gray-50 cursor-pointer">
+                            <input type="checkbox" value="2027Q4" class="quarter-checkbox w-4 h-4 text-blue-600 rounded focus:ring-blue-500">
+                            <span class="text-sm">2027年 Q4</span>
+                        </label>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-1">勾选该员工需要参与绩效评价的季度</p>
+                </div>
+            </div>
+            <div class="flex gap-3 mt-6">
+                <button onclick="closeEmployeeModal()" class="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition">取消</button>
+                <button onclick="saveEmployee()" class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 评分弹窗 -->
+    <div id="scoreModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 p-2 overflow-hidden">
+        <div class="bg-white rounded-xl max-w-6xl w-full h-[95vh] flex flex-col fade-in">
+            <div class="p-4 border-b border-gray-100 flex justify-between items-center shrink-0">
+                <div>
+                    <h3 class="text-lg font-semibold" id="scoreModalTitle">评分</h3>
+                    <p class="text-sm text-gray-500" id="scoreModalSubtitle"></p>
+                </div>
+                <button onclick="closeScoreModal()" class="text-gray-400 hover:text-gray-600">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            
+            <div class="flex-1 overflow-y-auto p-4">
+                <!-- 维度评分 - 两列紧凑布局 -->
+                <div class="mb-4">
+                    <div class="flex justify-between items-center mb-3">
+                        <h4 class="font-medium text-gray-800">维度评分（点击"标准"查看详细说明）</h4>
+                        <span class="text-sm text-green-600 font-semibold">维度均分：<span id="dimensionTotal">0.00</span></span>
+                    </div>
+                    <div id="dimensionScoresContainer" class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                        <!-- 动态生成维度评分卡片 -->
+                    </div>
+                </div>
+
+                <!-- 加减分 - 横向紧凑排列 -->
+                <div class="bg-gray-50 rounded-lg p-4 mb-4">
+                    <h4 class="font-medium text-gray-800 mb-3">加减分调整</h4>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <!-- 加分列 -->
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-2">加分 <span class="text-green-600 font-bold" id="bonusDisplay">0</span></label>
+                            <div class="flex gap-1 flex-wrap">
+                                <button onclick="setBonusValue(0)" class="px-2 py-1 text-xs bg-gray-200 rounded hover:bg-gray-300">0</button>
+                                <button onclick="setBonusValue(0.02)" class="px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200">0.02</button>
+                                <button onclick="setBonusValue(0.04)" class="px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200">0.04</button>
+                                <button onclick="setBonusValue(0.06)" class="px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200">0.06</button>
+                                <button onclick="setBonusValue(0.08)" class="px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200">0.08</button>
+                                <button onclick="setBonusValue(0.10)" class="px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200">0.10</button>
+                                <button onclick="setBonusValue(0.12)" class="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200">0.12</button>
+                                <button onclick="setBonusValue(0.14)" class="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200">0.14</button>
+                                <button onclick="setBonusValue(0.16)" class="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200">0.16</button>
+                                <button onclick="setBonusValue(0.18)" class="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200">0.18</button>
+                                <button onclick="setBonusValue(0.20)" class="px-2 py-1 text-xs bg-purple-100 text-purple-700 rounded hover:bg-purple-200">0.20</button>
+                            </div>
+                            <input type="hidden" id="bonusScore" value="0">
+                            <!-- 加分说明（有加分时必填） -->
+                            <div id="bonusRemarkWrap" class="hidden mt-2">
+                                <label class="block text-xs font-medium text-green-700 mb-1">
+                                    加分说明 <span class="text-red-500">*</span>
+                                </label>
+                                <textarea
+                                    id="bonusRemark"
+                                    rows="2"
+                                    placeholder="请说明加分原因..."
+                                    class="w-full px-2 py-1.5 text-xs border border-gray-300 rounded-lg resize-y focus:ring-2 focus:ring-green-500 focus:border-green-500 transition"
+                                    oninput="onBonusRemarkInput()"
+                                ></textarea>
+                                <p id="bonusRemarkError" class="hidden mt-1 text-xs text-red-500 flex items-center gap-1">
+                                    <svg class="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path></svg>
+                                    请填写加分说明后再提交
+                                </p>
+                            </div>
+                        </div>
+                        <!-- 减分列 -->
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-2">减分 <span class="text-red-600 font-bold" id="deductDisplay">0</span></label>
+                            <div class="flex gap-1 flex-wrap">
+                                <button onclick="setDeductValue(0)" class="px-2 py-1 text-xs bg-gray-200 rounded hover:bg-gray-300">0</button>
+                                <button onclick="setDeductValue(-0.02)" class="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200">-0.02</button>
+                                <button onclick="setDeductValue(-0.04)" class="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200">-0.04</button>
+                                <button onclick="setDeductValue(-0.06)" class="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200">-0.06</button>
+                                <button onclick="setDeductValue(-0.08)" class="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200">-0.08</button>
+                                <button onclick="setDeductValue(-0.10)" class="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200">-0.10</button>
+                                <button onclick="setDeductValue(-0.12)" class="px-2 py-1 text-xs bg-orange-100 text-orange-700 rounded hover:bg-orange-200">-0.12</button>
+                                <button onclick="setDeductValue(-0.14)" class="px-2 py-1 text-xs bg-orange-100 text-orange-700 rounded hover:bg-orange-200">-0.14</button>
+                                <button onclick="setDeductValue(-0.16)" class="px-2 py-1 text-xs bg-orange-100 text-orange-700 rounded hover:bg-orange-200">-0.16</button>
+                                <button onclick="setDeductValue(-0.18)" class="px-2 py-1 text-xs bg-orange-100 text-orange-700 rounded hover:bg-orange-200">-0.18</button>
+                                <button onclick="setDeductValue(-0.20)" class="px-2 py-1 text-xs bg-purple-100 text-purple-700 rounded hover:bg-purple-200">-0.20</button>
+                            </div>
+                            <input type="hidden" id="deductScore" value="0">
+                            <!-- 减分说明（有减分时必填） -->
+                            <div id="deductRemarkWrap" class="hidden mt-2">
+                                <label class="block text-xs font-medium text-red-700 mb-1">
+                                    减分说明 <span class="text-red-500">*</span>
+                                </label>
+                                <textarea
+                                    id="deductRemark"
+                                    rows="2"
+                                    placeholder="请说明减分原因..."
+                                    class="w-full px-2 py-1.5 text-xs border border-gray-300 rounded-lg resize-y focus:ring-2 focus:ring-red-500 focus:border-red-500 transition"
+                                    oninput="onDeductRemarkInput()"
+                                ></textarea>
+                                <p id="deductRemarkError" class="hidden mt-1 text-xs text-red-500 flex items-center gap-1">
+                                    <svg class="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path></svg>
+                                    请填写减分说明后再提交
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 总分汇总 -->
+                <div class="bg-blue-50 rounded-lg p-4">
+                    <div class="flex justify-between items-center">
+                        <div>
+                            <p class="text-xs text-gray-600">维度均分 + 加分 + 减分 = 当月总分</p>
+                            <p class="text-xs text-gray-500 font-mono mt-1" id="totalFormula">0.00 + 0 + 0 = 0.00</p>
+                        </div>
+                        <div class="text-right">
+                            <span class="text-sm text-gray-600">当月总分：</span>
+                            <span class="text-2xl font-bold text-blue-600" id="monthTotal">0.00</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="p-4 border-t border-gray-100 flex gap-3 shrink-0">
+                <button onclick="closeScoreModal()" class="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition">取消</button>
+                <button onclick="saveScore()" class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">保存评分</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 评价标准数据
+        const standards = {
+            '客服助理岗': [
+                {
+                    dimension: '1. 数据执行质量',
+                    levels: [
+                        { score: 1, desc: '数据经常延迟更新（超24小时），需多次催促；一个季度内出现≥3次错误，导致财务返工或客户对账争议；从未主动核对数据一致性' },
+                        { score: 2, desc: '能在催促下完成每日更新，但常有小错（如金额输错、客户漏填）；错误虽未造成损失，但影响内部效率；无主动核查意识' },
+                        { score: 3, desc: '每日下班前完成应收与表格更新，基本准确；偶有小错但能当日自行发现并修正；按要求执行，无需频繁提醒' },
+                        { score: 4, desc: '提前完成当日数据录入，准确率高；能交叉核对运单、账单信息，发现1–2处操作端录入偏差并反馈；支持财务月结高效完成' },
+                        { score: 5, desc: '数据100%准时、零差错；建立个人校验清单，主动识别系统性风险（如某客户长期应收异常）；提出数据模板优化建议并被采纳，提升团队效率' }
+                    ]
+                },
+                {
+                    dimension: '2. 文件管理与开票',
+                    levels: [
+                        { score: 1, desc: '发生以下任一行为：发错核心机密文件（如其他客户报价单、成本表）给客户；因开票信息严重错误导致公司经济损失 ≥1500元；伪造或隐瞒开票/文件问题' },
+                        { score: 2, desc: '开票或文件处理出现≥2次非关键错误（如发票抬头错、附件漏传），需同事返工；曾误发非敏感文件给错误联系人，引发内部提醒' },
+                        { score: 3, desc: '按时提交开票申请，信息基本正确；文件发送前会简单核对，并未造成客户投诉；偶尔需主管复核后修正' },
+                        { score: 4, desc: '开票100%准确及时；发送客户文件前执行"客户+内容"双重确认；归档清晰，便于追溯；从未因文件问题被投诉或返工' },
+                        { score: 5, desc: '建立个人文件发送SOP，全年0差错；主动优化开票流程（如预填模板、自动校验公式）；获财务或客户书面认可其专业性' }
+                    ]
+                },
+                {
+                    dimension: '3. 团队协作与支持',
+                    levels: [
+                        { score: 1, desc: '经常遗漏支持任务，需反复催促；交付材料错误或不完整，影响团队工作进度；工作态度消极，有推诿责任的情况发生' },
+                        { score: 2, desc: '能完成分配任务，但响应慢（>4小时）；材料常需返工；仅被动执行，从不主动询问需求' },
+                        { score: 3, desc: '按要求及时完成组员文件、数据支持请求；交付物基本可用；协作态度端正' },
+                        { score: 4, desc: '主动询问客户经理本周是否需要周报、账单包等支持；提前整理常用模板，减少重复沟通；多次获同事口头感谢' },
+                        { score: 5, desc: '预判团队高频需求（如月末集中开票期），提前准备好标准化工具包；主动承担新人带教中的文档培训工作' }
+                    ]
+                },
+                {
+                    dimension: '4. 合规与保密',
+                    levels: [
+                        { score: 1, desc: '故意泄露客户报价、成本等敏感信息；因严重疏忽造成公司经济损失 ≥1500元；隐瞒操作失误导致风险扩大' },
+                        { score: 2, desc: '曾将非公开文件误发至公共群或错误邮箱；对保密政策理解模糊，需多次提醒；风险意识薄弱' },
+                        { score: 3, desc: '了解基本保密要求，未发生泄密事件；遵守操作规范，无主观违规行为；能识别明显风险（如陌生邮件索要数据）' },
+                        { score: 4, desc: '严格区分客户信息权限，发送前必确认接收方；主动提醒同事注意文件命名规范（避免暴露客户名）；参与风控培训并分享心得' },
+                        { score: 5, desc: '成为团队"合规标兵"，主动制定文件操作SOP；发现潜在流程漏洞（如系统权限过大）并推动修复；获管理层表彰' }
+                    ]
+                }
+            ],
+            '客服专员岗': [
+                {
+                    dimension: '1. 客户沟通与响应',
+                    levels: [
+                        { score: 1, desc: '客户多次催促才回复；传递错误信息（如到港时间、费用）导致客户投诉；面对客户情绪升级时推诿或沉默' },
+                        { score: 2, desc: '能在24小时内回复客户，但多为被动应答；未主动告知已知异常（如清关延迟）；解释费用时含糊不清' },
+                        { score: 3, desc: '按SOP每日早晚更新货物状态；异常发生后2小时内通知客户并说明原因；能清晰解释基础费用构成（如陆运=运费+报关费）' },
+                        { score: 4, desc: '主动预判风险（如缅甸节假日影响到厂）提前邮件客户；安抚高情绪客户并达成共识；能对比不同运输方案优劣供客户选择' },
+                        { score: 5, desc: '客户主动表扬其服务细致（附邮件/微信截图）；在重大异常中协调多方资源快速解决，挽回客户信任；形成个人服务话术库并分享团队' }
+                    ]
+                },
+                {
+                    dimension: '2. SOP执行与合规',
+                    levels: [
+                        { score: 1, desc: '出现"无合同接单"；隐瞒货损/延误不报；篡改应收金额' },
+                        { score: 2, desc: '新客户漏签合同1次；应收台账延迟更新≥3天；开票信息错误需财务返工≥2次' },
+                        { score: 3, desc: '新客户100%完成"三件套"（报价单+信息表+合同）；每日按时更新货物状态；次月5日前准确录入费用，10日前完成开票' },
+                        { score: 4, desc: '主动检查操作端数据一致性（如体积/重量不符）并纠正；应收台账零差错，支持财务高效对账；提前识别批文缺失风险并提醒客户补料' },
+                        { score: 5, desc: '提出SOP优化建议（如进仓单增加缅甸工厂字段）并被全公司采纳；建立个人业务检查清单，连续6个月0合规问题；协助新人掌握风控要点' }
+                    ]
+                },
+                {
+                    dimension: '3. 财务协同意识',
+                    levels: [
+                        { score: 1, desc: '因费用录入错误造成公司损失 ≥1500元；故意拖延催款影响现金流' },
+                        { score: 2, desc: '应收台账常有遗漏，需财务反复核对；超期应收从未主动跟进' },
+                        { score: 3, desc: '每周五准时更新应收数据；对超30天未付款客户发送标准催款提醒' },
+                        { score: 4, desc: '主动联系客户了解付款计划，提供分期或预付选项；回款率 ≥95%，超期应收占比 <5%' },
+                        { score: 5, desc: '推动3家以上客户缩短账期或转预付；设计"账单+付款指引"一体化模板，提升客户付款效率；获财务部提名"最佳协同伙伴"' }
+                    ]
+                },
+                {
+                    dimension: '4. 业务学习与拓展',
+                    levels: [
+                        { score: 1, desc: '拒绝学习进口/空运产品；从未提及非主营服务' },
+                        { score: 2, desc: '仅能处理出口陆运/海运/空运其中一类业务的，在主管要求下才转发产品介绍' },
+                        { score: 3, desc: '熟悉CMP/快递报价结构，能解释费用明细；偶尔向客户提及仓储或进口服务' },
+                        { score: 4, desc: '能独立处理进口询价并制作方案；成功推荐1单非主营产品（如缅甸建厂物流支持）' },
+                        { score: 5, desc: '季度内转化≥2单进口或增值服务；整理《缅甸线路常见问题Q&A》供团队使用；主动报名产品培训并通过考核' }
+                    ]
+                }
+            ],
+            '客服主管岗': [
+                {
+                    dimension: '1. 团队执行质量',
+                    levels: [
+                        { score: 1, desc: '本组内频繁出现合同缺失、应收错误' },
+                        { score: 2, desc: '能发现问题但整改滞后' },
+                        { score: 3, desc: '小组SOP执行率≥98%，无重大投诉' },
+                        { score: 4, desc: '建立小组自查清单，异常闭环率100%' },
+                        { score: 5, desc: '小组CSAT连续3月部门第一，获客户书面表扬' }
+                    ]
+                },
+                {
+                    dimension: '2. 过程监督与辅导',
+                    levels: [
+                        { score: 1, desc: '从未组织1对1辅导；组员犯错后仅批评无指导；新人3个月仍无法独立接单' },
+                        { score: 2, desc: '偶尔开会但无针对性；辅导停留在"下次注意"层面；组员绩效长期低于平均' },
+                        { score: 3, desc: '每周与每位组员1对1沟通，指出具体改进点；新人2周内掌握基础操作' },
+                        { score: 4, desc: '针对低分组员制定个性化改进计划（如"提升进口产品知识"）；组员季度绩效提升显著（2人达A级以上）' },
+                        { score: 5, desc: '建立小组"错题本"与"优秀案例库"；培养1名组员成功晋升；获HR认可为"高潜导师"' }
+                    ]
+                },
+                {
+                    dimension: '3. 流程标准化推动',
+                    levels: [
+                        { score: 1, desc: '完全依赖现有流程，组内操作混乱；从未反馈流程问题' },
+                        { score: 2, desc: '能指出问题但未行动；组员重复犯同类错误' },
+                        { score: 3, desc: '组织小组SOP培训并抽查执行；使用公司标准模板' },
+                        { score: 4, desc: '整理《常见异常处理手册》供组内使用；优化进仓单填写流程，减少操作返工' },
+                        { score: 5, desc: '主导开发Excel自动校验工具，被全公司推广；推动TMS系统新增"应收提醒"功能；输出标准化带教包' }
+                    ]
+                },
+                {
+                    dimension: '4. 跨部门协同效能',
+                    levels: [
+                        { score: 1, desc: '因信息滞后导致操作延误；被其他部门投诉"难沟通、不配合"' },
+                        { score: 2, desc: '仅完成基本对接；问题出现后互相推责' },
+                        { score: 3, desc: '主动同步关键节点（如车辆离境、清关进度）；能协调解决常规异常' },
+                        { score: 4, desc: '建立跨部门的周例会机制；快速响应跨部门紧急需求（如加急开票）' },
+                        { score: 5, desc: '推动成立"客户异常联合响应小组"；获兄弟部门主动提名"最佳协作伙伴"；在跨部门会议上代表客服提出建设性方案' }
+                    ]
+                }
+            ]
+        };
+
+        // 数据存储
+        let employees = [];
+        let currentEditId = null;
+        let cloudReady = false;
+        
+        // 从云数据库加载数据
+        async function loadFromCloud() {
+            try {
+                const result = await callCloudAPI('getEmployees');
+                if (result.code === 0 && result.data && result.data.length > 0) {
+                    // API返回数组，第一个元素包含data字段
+                    const cloudDoc = result.data[0];
+                    const cloudData = cloudDoc.data || cloudDoc;
+                    
+                    if (cloudData.employees && cloudData.employees.length > 0) {
+                        employees = cloudData.employees;
+                        console.log('从云端加载', employees.length, '条记录');
+                        
+                        // 修复数据结构兼容性
+                        employees = migrateEmployeeData(employees);
+                        
+                        // 更新本地备份
+                        localStorage.setItem('performanceEmployees_backup', JSON.stringify(employees));
+                    } else {
+                        // 云端没有数据，尝试从本地迁移
+                        await migrateLocalToCloud();
+                    }
+                } else {
+                    // 云端没有数据，尝试从本地迁移
+                    await migrateLocalToCloud();
+                }
+                
+                renderTable();
+            } catch (err) {
+                console.error('加载数据失败:', err);
+                // 如果云端加载失败，尝试从本地恢复
+                employees = JSON.parse(localStorage.getItem('performanceEmployees_backup')) || 
+                            JSON.parse(localStorage.getItem('performanceEmployees')) || [];
+                renderTable();
+            }
+        }
+        
+        // 迁移本地数据到云端
+        async function migrateLocalToCloud() {
+            const localData = JSON.parse(localStorage.getItem('performanceEmployees_backup')) || 
+                              JSON.parse(localStorage.getItem('performanceEmployees')) || [];
+            if (localData.length > 0) {
+                console.log('发现本地数据', localData.length, '条，正在迁移到云端...');
+                employees = localData;
+                await saveAllToCloud();
+                console.log('数据迁移完成');
+            }
+        }
+        
+        // 保存所有数据到云端
+        async function saveAllToCloud() {
+            try {
+                updateSyncStatus('syncing');
+                const result = await callCloudAPI('saveEmployees', { 
+                    data: { employees: employees } 
+                });
+                if (result.code === 0) {
+                    console.log('所有数据已同步到云端');
+                    updateSyncStatus('synced');
+                    return true;
+                } else {
+                    console.error('同步失败:', result);
+                    updateSyncStatus('disconnected');
+                    return false;
+                }
+            } catch (err) {
+                console.error('同步失败:', err);
+                updateSyncStatus('disconnected');
+                return false;
+            }
+        }
+        
+        // 保存到云数据库
+        async function saveToCloud() {
+            try {
+                // 备份到本地
+                localStorage.setItem('performanceEmployees_backup', JSON.stringify(employees));
+                
+                // 同步到云端
+                if (cloudReady) {
+                    await saveAllToCloud();
+                }
+                return true;
+            } catch (err) {
+                console.error('保存失败:', err);
+                return false;
+            }
+        }
+        
+        // 同步单个员工评分到云端
+        async function syncEmployeeToCloud(emp) {
+            try {
+                updateSyncStatus('syncing');
+                // 使用saveEmployees同步所有数据
+                const result = await callCloudAPI('saveEmployees', { 
+                    data: { employees: employees } 
+                });
+                if (result.code === 0) {
+                    console.log('同步成功:', emp.name);
+                    updateSyncStatus('synced');
+                    return true;
+                } else {
+                    console.error('同步失败:', result);
+                    updateSyncStatus('disconnected');
+                    return false;
+                }
+            } catch (err) {
+                console.error('同步员工数据失败:', err);
+                updateSyncStatus('disconnected');
+                return false;
+            }
+        }
+        
+        // 从云端删除员工
+        async function deleteEmployeeFromCloud(empId) {
+            try {
+                // 删除后重新同步所有数据到云端
+                if (cloudReady) {
+                    await saveAllToCloud();
+                }
+                return true;
+            } catch (err) {
+                console.error('删除员工失败:', err);
+                return false;
+            }
+        }
+        let currentScoreEmployee = null;
+        let currentMonth = null;
+        let currentQuarter = '2026Q2';
+        let selectedEmployeeIds = new Set();
+
+        // 全选/取消全选
+        function toggleSelectAll() {
+            const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+            const checkboxes = document.querySelectorAll('.employee-checkbox');
+            
+            checkboxes.forEach(cb => {
+                cb.checked = selectAllCheckbox.checked;
+                if (selectAllCheckbox.checked) {
+                    selectedEmployeeIds.add(cb.value);
+                } else {
+                    selectedEmployeeIds.delete(cb.value);
+                }
+            });
+            
+            updateSelectionButtons();
+        }
+
+        // 更新选择状态
+        function updateSelection() {
+            const checkboxes = document.querySelectorAll('.employee-checkbox');
+            const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+            
+            selectedEmployeeIds.clear();
+            let checkedCount = 0;
+            
+            checkboxes.forEach(cb => {
+                if (cb.checked) {
+                    selectedEmployeeIds.add(cb.value);
+                    checkedCount++;
+                }
+            });
+            
+            // 更新全选框状态
+            selectAllCheckbox.checked = checkedCount > 0 && checkedCount === checkboxes.length;
+            selectAllCheckbox.indeterminate = checkedCount > 0 && checkedCount < checkboxes.length;
+            
+            updateSelectionButtons();
+        }
+
+        // 更新导出按钮状态
+        function updateSelectionButtons() {
+            const hasSelection = selectedEmployeeIds.size > 0;
+            const btnExcel = document.getElementById('btnExportSelectedExcel');
+            const btnWord = document.getElementById('btnExportSelectedWord');
+            
+            if (btnExcel) {
+                btnExcel.disabled = !hasSelection;
+                btnExcel.classList.toggle('opacity-50', !hasSelection);
+                btnExcel.classList.toggle('cursor-not-allowed', !hasSelection);
+            }
+            
+            if (btnWord) {
+                btnWord.disabled = !hasSelection;
+                btnWord.classList.toggle('opacity-50', !hasSelection);
+                btnWord.classList.toggle('cursor-not-allowed', !hasSelection);
+            }
+        }
+
+        // 获取选中的员工数据
+        function getSelectedEmployees() {
+            return employees.filter(emp => selectedEmployeeIds.has(emp.id));
+        }
+
+        // 切换季度
+        function onQuarterChange() {
+            currentQuarter = document.getElementById('quarterSelect').value;
+            // 清空选择状态
+            selectedEmployeeIds.clear();
+            document.getElementById('selectAllCheckbox').checked = false;
+            document.getElementById('selectAllCheckbox').indeterminate = false;
+            updateSelectionButtons();
+            renderTable();
+        }
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', async () => {
+            // 初始化云服务
+            cloudReady = await initCloud();
+            
+            if (cloudReady) {
+                // 从云端加载数据
+                await loadFromCloud();
+            } else {
+                // 降级：使用本地数据
+                employees = JSON.parse(localStorage.getItem('performanceEmployees')) || [];
+            }
+            
+            // 兼容旧数据迁移
+            migrateToQuarters();
+            
+            renderTable();
+            
+            // 监听输入变化计算当月总分
+            ['monthScore', 'bonusScore', 'deductScore'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.addEventListener('input', calculateMonthTotal);
+            });
+            
+            // 删除功能已通过onclick直接绑定到按钮
+        });
+
+        // 修复员工数据结构（兼容旧数据）
+        function migrateEmployeeData(empList) {
+            return empList.map(emp => {
+                // 确保quarters存在
+                if (!emp.quarters) {
+                    emp.quarters = {};
+                }
+                // 确保activeQuarters存在
+                if (!emp.activeQuarters) {
+                    emp.activeQuarters = [];
+                }
+                // 如果有旧格式的months数据，迁移到quarters
+                if (emp.months && !emp.quarters['2026Q2']) {
+                    emp.quarters['2026Q2'] = emp.months;
+                    if (!emp.activeQuarters.includes('2026Q2')) {
+                        emp.activeQuarters.push('2026Q2');
+                    }
+                }
+                return emp;
+            });
+        }
+        
+        // 渲染表格
+        function renderTable() {
+            const tbody = document.getElementById('employeeTable');
+            const emptyState = document.getElementById('emptyState');
+            const countSpan = document.getElementById('employeeCount');
+            
+            // 只显示参与当前季度评价的员工
+            const quarterData = employees.filter(emp => 
+                emp.activeQuarters && emp.activeQuarters.includes(currentQuarter)
+            );
+            countSpan.textContent = `共 ${quarterData.length} 人`;
+            
+            if (quarterData.length === 0) {
+                tbody.innerHTML = '';
+                emptyState.classList.remove('hidden');
+                return;
+            }
+            
+            emptyState.classList.add('hidden');
+            
+            tbody.innerHTML = quarterData.map((emp, index) => {
+                const months = emp.quarters[currentQuarter] || [{}, {}, {}];
+                const m1 = months[0] || {};
+                const m2 = months[1] || {};
+                const m3 = months[2] || {};
+                
+                const m1Total = (m1.score || 0) + (m1.bonus || 0) + (m1.deduct || 0);
+                const m2Total = (m2.score || 0) + (m2.bonus || 0) + (m2.deduct || 0);
+                const m3Total = (m3.score || 0) + (m3.bonus || 0) + (m3.deduct || 0);
+                
+                const quarterTotal = quarterData.length > 0 ? ((m1Total + m2Total + m3Total) / 3).toFixed(2) : '0.00';
+                
+                return `
+                    <tr class="hover:bg-gray-50 transition">
+                        <td class="px-2 py-3 text-center">
+                            <input type="checkbox" class="employee-checkbox w-4 h-4 text-blue-600 rounded focus:ring-blue-500" value="${emp.id}" onchange="updateSelection()">
+                        </td>
+                        <td class="px-4 py-3 text-sm text-gray-900">${index + 1}</td>
+                        <td class="px-4 py-3 text-sm text-gray-900">${emp.position}</td>
+                        <td class="px-4 py-3 text-sm font-medium text-gray-900">${emp.name}</td>
+                        <td class="px-4 py-3 text-center">
+                            <button onclick="openScoreModal('${emp.id}', 0)" class="text-sm ${m1.score ? 'text-blue-600 hover:text-blue-800' : 'text-gray-400 hover:text-gray-600'} transition">
+                                ${m1.score ? m1Total.toFixed(2) : '未评分'}
+                            </button>
+                        </td>
+                        <td class="px-4 py-3 text-center">
+                            <button onclick="openScoreModal('${emp.id}', 1)" class="text-sm ${m2.score ? 'text-blue-600 hover:text-blue-800' : 'text-gray-400 hover:text-gray-600'} transition">
+                                ${m2.score ? m2Total.toFixed(2) : '未评分'}
+                            </button>
+                        </td>
+                        <td class="px-4 py-3 text-center">
+                            <button onclick="openScoreModal('${emp.id}', 2)" class="text-sm ${m3.score ? 'text-blue-600 hover:text-blue-800' : 'text-gray-400 hover:text-gray-600'} transition">
+                                ${m3.score ? m3Total.toFixed(2) : '未评分'}
+                            </button>
+                        </td>
+                        <td class="px-4 py-3 text-center">
+                            <span class="font-semibold ${quarterTotal >= 4 ? 'text-green-600' : quarterTotal >= 3 ? 'text-blue-600' : quarterTotal >= 2 ? 'text-yellow-600' : 'text-red-600'}">${quarterTotal}</span>
+                        </td>
+                        <td class="px-4 py-3 text-center">
+                            <button onclick="showEditEmployeeModal('${emp.id}')" class="text-blue-500 hover:text-blue-700 transition px-3 py-1 rounded hover:bg-blue-50 text-sm border border-blue-200 mr-2" title="编辑">编辑</button>
+                            <button onclick="deleteEmployee('${emp.id}')" class="delete-btn text-red-500 hover:text-red-700 transition px-3 py-1 rounded hover:bg-red-50 text-sm border border-red-200" title="删除">删除</button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+            
+            // 保存到本地备份
+            localStorage.setItem('performanceEmployees_backup', JSON.stringify(employees));
+        }
+
+        // 员工管理
+        function showEmployeeModal() {
+            currentEditId = null;
+            document.getElementById('modalTitle').textContent = '添加员工';
+            document.getElementById('empName').value = '';
+            document.getElementById('empPosition').value = '';
+            // 清空所有季度复选框
+            document.querySelectorAll('.quarter-checkbox').forEach(cb => cb.checked = false);
+            document.getElementById('employeeModal').classList.remove('hidden');
+            document.getElementById('employeeModal').classList.add('flex');
+        }
+
+        function showEditEmployeeModal(employeeId) {
+            const emp = employees.find(e => e.id === employeeId);
+            if (!emp) return;
+            
+            currentEditId = employeeId;
+            document.getElementById('modalTitle').textContent = '编辑员工';
+            document.getElementById('empName').value = emp.name;
+            document.getElementById('empPosition').value = emp.position;
+            
+            // 回填季度选择
+            document.querySelectorAll('.quarter-checkbox').forEach(cb => {
+                cb.checked = emp.activeQuarters && emp.activeQuarters.includes(cb.value);
+            });
+            
+            document.getElementById('employeeModal').classList.remove('hidden');
+            document.getElementById('employeeModal').classList.add('flex');
+        }
+
+        function closeEmployeeModal() {
+            document.getElementById('employeeModal').classList.add('hidden');
+            document.getElementById('employeeModal').classList.remove('flex');
+        }
+
+        function saveEmployee() {
+            const name = document.getElementById('empName').value.trim();
+            const position = document.getElementById('empPosition').value;
+            
+            if (!name || !position) {
+                alert('请填写完整信息');
+                return;
+            }
+            
+            // 获取选中的季度
+            const selectedQuarters = Array.from(document.querySelectorAll('.quarter-checkbox:checked')).map(cb => cb.value);
+            if (selectedQuarters.length === 0) {
+                alert('请至少选择一个参与评价的季度');
+                return;
+            }
+            
+            const newEmployee = {
+                id: currentEditId || 'emp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+                name: name,
+                position: position,
+                // 记录员工参与的季度列表
+                activeQuarters: selectedQuarters,
+                // 按季度存储：{ "2026Q2": [{}, {}, {}], "2026Q3": [...] }
+                quarters: {}
+            };
+            
+            // 为选中的季度初始化数据
+            selectedQuarters.forEach(q => {
+                newEmployee.quarters[q] = [{}, {}, {}];
+            });
+            
+            if (currentEditId) {
+                const index = employees.findIndex(e => e.id === currentEditId);
+                if (index !== -1) {
+                    // 保留旧数据的quarters结构（只保留仍在选中列表中的季度）
+                    const oldEmployee = employees[index];
+                    const oldQuarters = oldEmployee.quarters || {};
+                    
+                    // 保留已有数据的季度，新增选中的季度
+                    selectedQuarters.forEach(q => {
+                        if (oldQuarters[q]) {
+                            newEmployee.quarters[q] = oldQuarters[q];
+                        }
+                    });
+                    
+                    employees[index] = newEmployee;
+                }
+            } else {
+                employees.push(newEmployee);
+            }
+            
+            localStorage.setItem('performanceEmployees_backup', JSON.stringify(employees));
+            
+            // 同步到云端
+            const empToSync = currentEditId 
+                ? employees.find(e => e.id === currentEditId) 
+                : employees[employees.length - 1];
+            if (cloudReady && empToSync) {
+                syncEmployeeToCloud(empToSync);
+            }
+            
+            renderTable();
+            closeEmployeeModal();
+        }
+
+        function deleteEmployee(employeeId) {
+            const index = employees.findIndex(e => e.id === employeeId);
+            if (index !== -1) {
+                const emp = employees[index];
+                if (confirm(`确定要删除员工「${emp.name}」吗？\n\n此操作不可恢复。`)) {
+                    // 从云端删除
+                    if (cloudReady) {
+                        deleteEmployeeFromCloud(emp.id);
+                    }
+                    employees.splice(index, 1);
+                    renderTable();
+                }
+            }
+        }
+
+        // 兼容旧数据：迁移 months 结构到 quarters，并设置默认activeQuarters
+        function migrateToQuarters() {
+            const allQuarters = ['2026Q2', '2026Q3', '2026Q4', '2027Q1', '2027Q2', '2027Q3', '2027Q4'];
+            let needsMigrate = false;
+            
+            employees.forEach(emp => {
+                // 迁移旧结构（months -> quarters）
+                if (!emp.quarters && emp.months) {
+                    emp.quarters = {};
+                    allQuarters.forEach(q => {
+                        emp.quarters[q] = JSON.parse(JSON.stringify(emp.months));
+                    });
+                    delete emp.months;
+                    needsMigrate = true;
+                }
+                
+                // 为没有activeQuarters的旧数据设置默认值（默认参与所有季度）
+                if (!emp.activeQuarters) {
+                    emp.activeQuarters = [...allQuarters];
+                    needsMigrate = true;
+                }
+            });
+            
+            if (needsMigrate) {
+                localStorage.setItem('performanceEmployees', JSON.stringify(employees));
+            }
+        }
+
+        // 评分管理
+        function openScoreModal(employeeId, monthIndex) {
+            currentScoreEmployee = employees.find(e => e.id === employeeId);
+            currentMonth = monthIndex;
+            
+            if (!currentScoreEmployee) return;
+            
+            const monthNames = ['季度首月', '季度次月', '季度末月'];
+            document.getElementById('scoreModalTitle').textContent = `${currentScoreEmployee.name} - ${monthNames[monthIndex]}`;
+            document.getElementById('scoreModalSubtitle').textContent = `岗位：${currentScoreEmployee.position}`;
+            
+            // 渲染评价标准
+            renderStandards(currentScoreEmployee.position);
+            
+            // 加载已有数据 - 从quarters中读取
+            const quarterMonths = currentScoreEmployee.quarters?.[currentQuarter] || [{}, {}, {}];
+            const monthData = quarterMonths[monthIndex] || {};
+            const standardsData = standards[currentScoreEmployee.position] || [];
+            
+            // 加载维度分数
+            if (monthData.dimensionScores && monthData.dimensionScores.length === standardsData.length) {
+                dimensionScores = [...monthData.dimensionScores];
+                dimensionScores.forEach((score, idx) => {
+                    const select = document.getElementById(`dimScore_${idx}`);
+                    if (select && score > 0) {
+                        select.value = score;
+                        // 触发显示描述
+                        updateDimensionScore(idx, score);
+                    }
+                });
+            } else {
+                dimensionScores = new Array(standardsData.length).fill(0);
+            }
+            calculateDimensionTotal();
+            
+            // 设置加分显示
+            const bonusValue = monthData.bonus || 0;
+            document.getElementById('bonusScore').value = bonusValue.toFixed(2);
+            document.getElementById('bonusDisplay').textContent = bonusValue.toFixed(2);
+            
+            // 设置减分显示
+            const deductValue = monthData.deduct || 0;
+            document.getElementById('deductScore').value = deductValue.toFixed(2);
+            document.getElementById('deductDisplay').textContent = deductValue.toFixed(2);
+
+            // 回填加分说明，控制显示/隐藏
+            const bonusWrap = document.getElementById('bonusRemarkWrap');
+            const bonusTa = document.getElementById('bonusRemark');
+            if (bonusValue > 0) {
+                bonusWrap.classList.remove('hidden');
+                bonusTa.value = monthData.bonusRemark || '';
+            } else {
+                bonusWrap.classList.add('hidden');
+                bonusTa.value = '';
+            }
+            bonusTa.classList.remove('border-red-400', 'focus:ring-red-500', 'focus:border-red-400');
+            bonusTa.classList.add('border-gray-300', 'focus:ring-green-500');
+            document.getElementById('bonusRemarkError').classList.add('hidden');
+
+            // 回填减分说明，控制显示/隐藏
+            const deductWrap = document.getElementById('deductRemarkWrap');
+            const deductTa = document.getElementById('deductRemark');
+            if (deductValue < 0) {
+                deductWrap.classList.remove('hidden');
+                deductTa.value = monthData.deductRemark || '';
+            } else {
+                deductWrap.classList.add('hidden');
+                deductTa.value = '';
+            }
+            deductTa.classList.remove('border-red-400', 'focus:ring-red-500', 'focus:border-red-400');
+            deductTa.classList.add('border-gray-300');
+            document.getElementById('deductRemarkError').classList.add('hidden');
+            
+            calculateMonthTotal();
+            
+            document.getElementById('scoreModal').classList.remove('hidden');
+            document.getElementById('scoreModal').classList.add('flex');
+        }
+
+        // 当前维度分数
+        let dimensionScores = [];
+        
+        function renderStandards(position) {
+            const dimContainer = document.getElementById('dimensionScoresContainer');
+            const standardsData = standards[position] || [];
+            
+            // 初始化维度分数
+            dimensionScores = new Array(standardsData.length).fill(0);
+            
+            // 渲染维度评分（超紧凑双列布局）
+            dimContainer.innerHTML = standardsData.map((std, idx) => `
+                <div class="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                    <!-- 头部：维度名称 + 分数选择 + 标准按钮 -->
+                    <div class="p-2 flex items-center gap-2">
+                        <h5 class="font-medium text-gray-800 text-xs flex-1 truncate" title="${std.dimension}">${std.dimension}</h5>
+                        <select id="dimScore_${idx}" onchange="updateDimensionScore(${idx}, this.value)" class="w-16 px-1 py-1 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500">
+                            <option value="0">-</option>
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                            <option value="5">5</option>
+                        </select>
+                        <button onclick="toggleStandard(${idx})" class="text-blue-600 text-xs hover:bg-blue-50 px-2 py-1 rounded whitespace-nowrap" id="toggleBtn_${idx}">
+                            标准
+                        </button>
+                    </div>
+                    <!-- 展开区域：评分标准（紧凑列表） -->
+                    <div id="standardBox_${idx}" class="hidden border-t border-gray-100 bg-gray-50">
+                        <div class="p-2 space-y-1">
+                            ${std.levels.map(level => `
+                                <div class="text-xs p-1.5 rounded ${level.score <= 2 ? 'bg-red-50 text-red-700' : level.score === 3 ? 'bg-yellow-50 text-yellow-700' : 'bg-green-50 text-green-700'}">
+                                    <span class="font-bold">${level.score}分：</span>${level.desc}
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                    <!-- 选中分数的提示（单行） -->
+                    <div id="dimDesc_${idx}" class="hidden border-t border-gray-100 bg-blue-50 p-1.5 text-xs text-blue-700 truncate">
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        function toggleStandard(idx) {
+            const box = document.getElementById(`standardBox_${idx}`);
+            const btn = document.getElementById(`toggleBtn_${idx}`);
+            if (box.classList.contains('hidden')) {
+                box.classList.remove('hidden');
+                btn.textContent = '收起';
+                btn.classList.add('bg-blue-100');
+            } else {
+                box.classList.add('hidden');
+                btn.textContent = '标准';
+                btn.classList.remove('bg-blue-100');
+            }
+        }
+
+        function updateDimensionScore(idx, value) {
+            const score = parseFloat(value) || 0;
+            dimensionScores[idx] = score;
+            
+            // 显示选中的简要提示
+            const descContainer = document.getElementById(`dimDesc_${idx}`);
+            if (descContainer && currentScoreEmployee && score > 0) {
+                const position = currentScoreEmployee.position;
+                const standardsData = standards[position] || [];
+                const std = standardsData[idx];
+                if (std) {
+                    const level = std.levels.find(l => l.score === score);
+                    if (level) {
+                        descContainer.innerHTML = `<span class="font-bold">${score}分：</span>${level.desc.substring(0, 50)}${level.desc.length > 50 ? '...' : ''}`;
+                        descContainer.classList.remove('hidden');
+                    }
+                }
+            } else if (descContainer) {
+                descContainer.classList.add('hidden');
+            }
+            
+            calculateDimensionTotal();
+        }
+
+        function calculateDimensionTotal() {
+            // 计算已评分的维度平均分
+            const validScores = dimensionScores.filter(s => s > 0);
+            const avg = validScores.length > 0 
+                ? validScores.reduce((a, b) => a + b, 0) / validScores.length 
+                : 0;
+            document.getElementById('dimensionTotal').textContent = avg.toFixed(2);
+            calculateMonthTotal();
+        }
+
+        function calculateMonthTotal() {
+            const dimTotal = parseFloat(document.getElementById('dimensionTotal').textContent) || 0;
+            const bonus = parseFloat(document.getElementById('bonusScore').value) || 0;
+            const deduct = parseFloat(document.getElementById('deductScore').value) || 0;
+            
+            const total = dimTotal + bonus + deduct;
+            document.getElementById('monthTotal').textContent = total.toFixed(2);
+            
+            // 更新公式显示
+            const sign = deduct >= 0 ? '+' : '';
+            document.getElementById('totalFormula').textContent = `${dimTotal.toFixed(2)} + ${bonus.toFixed(2)} ${sign}${deduct.toFixed(2)} = ${total.toFixed(2)}`;
+        }
+
+        // 设置加分
+        function setBonusValue(value) {
+            document.getElementById('bonusScore').value = value.toFixed(2);
+            document.getElementById('bonusDisplay').textContent = value.toFixed(2);
+            // 有加分时显示说明框，归零时隐藏并清空
+            const wrap = document.getElementById('bonusRemarkWrap');
+            if (value > 0) {
+                wrap.classList.remove('hidden');
+            } else {
+                wrap.classList.add('hidden');
+                document.getElementById('bonusRemark').value = '';
+                document.getElementById('bonusRemarkError').classList.add('hidden');
+                const ta = document.getElementById('bonusRemark');
+                ta.classList.remove('border-red-400', 'focus:ring-red-500');
+                ta.classList.add('border-gray-300', 'focus:ring-green-500');
+            }
+            calculateMonthTotal();
+        }
+
+        // 设置减分
+        function setDeductValue(value) {
+            document.getElementById('deductScore').value = value.toFixed(2);
+            document.getElementById('deductDisplay').textContent = value.toFixed(2);
+            // 有减分时显示说明框，归零时隐藏并清空
+            const wrap = document.getElementById('deductRemarkWrap');
+            if (value < 0) {
+                wrap.classList.remove('hidden');
+            } else {
+                wrap.classList.add('hidden');
+                document.getElementById('deductRemark').value = '';
+                document.getElementById('deductRemarkError').classList.add('hidden');
+                const ta = document.getElementById('deductRemark');
+                ta.classList.remove('border-red-400', 'focus:ring-red-500');
+                ta.classList.add('border-gray-300', 'focus:ring-red-500');
+            }
+            calculateMonthTotal();
+        }
+
+        function closeScoreModal() {
+            document.getElementById('scoreModal').classList.add('hidden');
+            document.getElementById('scoreModal').classList.remove('flex');
+        }
+
+        // 加分说明输入时实时清除错误
+        function onBonusRemarkInput() {
+            const val = document.getElementById('bonusRemark').value.trim();
+            if (val) {
+                document.getElementById('bonusRemarkError').classList.add('hidden');
+                const ta = document.getElementById('bonusRemark');
+                ta.classList.remove('border-red-400', 'focus:ring-red-500');
+                ta.classList.add('border-gray-300', 'focus:ring-green-500');
+            }
+        }
+
+        // 减分说明输入时实时清除错误
+        function onDeductRemarkInput() {
+            const val = document.getElementById('deductRemark').value.trim();
+            if (val) {
+                document.getElementById('deductRemarkError').classList.add('hidden');
+                const ta = document.getElementById('deductRemark');
+                ta.classList.remove('border-red-400', 'focus:ring-red-500');
+                ta.classList.add('border-gray-300', 'focus:ring-red-500');
+            }
+        }
+
+        function saveScore() {
+            if (!currentScoreEmployee) return;
+            
+            const dimTotal = parseFloat(document.getElementById('dimensionTotal').textContent) || 0;
+            const bonus = parseFloat(document.getElementById('bonusScore').value) || 0;
+            const deduct = parseFloat(document.getElementById('deductScore').value) || 0;
+            const bonusRemark = document.getElementById('bonusRemark').value.trim();
+            const deductRemark = document.getElementById('deductRemark').value.trim();
+            
+            // 检查是否所有维度都已评分
+            const validScores = dimensionScores.filter(s => s > 0);
+            const standardsData = standards[currentScoreEmployee.position] || [];
+            
+            if (validScores.length < standardsData.length) {
+                alert(`请为所有 ${standardsData.length} 个维度评分后再保存`);
+                return;
+            }
+
+            // 校验加分说明（有加分时必填）
+            if (bonus > 0 && !bonusRemark) {
+                const errorEl = document.getElementById('bonusRemarkError');
+                const ta = document.getElementById('bonusRemark');
+                errorEl.classList.remove('hidden');
+                ta.classList.remove('border-gray-300', 'focus:ring-green-500');
+                ta.classList.add('border-red-400', 'focus:ring-red-500', 'focus:border-red-400');
+                ta.focus();
+                ta.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+            }
+
+            // 校验减分说明（有减分时必填）
+            if (deduct < 0 && !deductRemark) {
+                const errorEl = document.getElementById('deductRemarkError');
+                const ta = document.getElementById('deductRemark');
+                errorEl.classList.remove('hidden');
+                ta.classList.remove('border-gray-300');
+                ta.classList.add('border-red-400', 'focus:ring-red-500', 'focus:border-red-400');
+                ta.focus();
+                ta.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+            }
+            
+            // 保存到quarters（确保员工已参与当前季度）
+            if (!currentScoreEmployee.quarters) currentScoreEmployee.quarters = {};
+            if (!currentScoreEmployee.quarters[currentQuarter]) currentScoreEmployee.quarters[currentQuarter] = [{}, {}, {}];
+            
+            // 确保当前季度在activeQuarters中
+            if (!currentScoreEmployee.activeQuarters) currentScoreEmployee.activeQuarters = [];
+            if (!currentScoreEmployee.activeQuarters.includes(currentQuarter)) {
+                currentScoreEmployee.activeQuarters.push(currentQuarter);
+            }
+            
+            currentScoreEmployee.quarters[currentQuarter][currentMonth] = {
+                score: dimTotal,
+                bonus: bonus,
+                deduct: deduct,
+                bonusRemark: bonusRemark,
+                deductRemark: deductRemark,
+                dimensionScores: [...dimensionScores]
+            };
+            
+            localStorage.setItem('performanceEmployees_backup', JSON.stringify(employees));
+            
+            // 同步评分到云端
+            if (cloudReady && currentScoreEmployee) {
+                syncEmployeeToCloud(currentScoreEmployee);
+            }
+            
+            renderTable();
+            closeScoreModal();
+        }
+
+        // Excel导出（汇总表）- 导出当前选定季度的数据
+        function exportToExcel() {
+            // 只导出参与当前季度的员工
+            const quarterData = employees.filter(emp => 
+                emp.activeQuarters && emp.activeQuarters.includes(currentQuarter)
+            );
+            if (quarterData.length === 0) {
+                alert('暂无数据可导出');
+                return;
+            }
+            
+            const data = quarterData.map((emp, index) => {
+                const months = emp.quarters[currentQuarter] || [{}, {}, {}];
+                const m1 = months[0] || {};
+                const m2 = months[1] || {};
+                const m3 = months[2] || {};
+                
+                const m1Total = (m1.score || 0) + (m1.bonus || 0) + (m1.deduct || 0);
+                const m2Total = (m2.score || 0) + (m2.bonus || 0) + (m2.deduct || 0);
+                const m3Total = (m3.score || 0) + (m3.bonus || 0) + (m3.deduct || 0);
+                const quarterTotal = ((m1Total + m2Total + m3Total) / 3).toFixed(2);
+                
+                return {
+                    '序号': index + 1,
+                    '岗位': emp.position,
+                    '姓名': emp.name,
+                    '首月-打分': m1.score || '',
+                    '首月-加分': m1.bonus || '',
+                    '首月-减分': m1.deduct || '',
+                    '次月-打分': m2.score || '',
+                    '次月-加分': m2.bonus || '',
+                    '次月-减分': m2.deduct || '',
+                    '末月-打分': m3.score || '',
+                    '末月-加分': m3.bonus || '',
+                    '末月-减分': m3.deduct || '',
+                    '季度总评分': quarterTotal
+                };
+            });
+            
+            const ws = XLSX.utils.json_to_sheet(data);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, '绩效评分表');
+            
+            // 设置列宽
+            ws['!cols'] = [
+                { wch: 6 }, { wch: 12 }, { wch: 10 },
+                { wch: 10 }, { wch: 10 }, { wch: 10 },
+                { wch: 10 }, { wch: 10 }, { wch: 10 },
+                { wch: 10 }, { wch: 10 }, { wch: 10 },
+                { wch: 12 }
+            ];
+            
+            const date = new Date().toISOString().slice(0, 7).replace('-', '');
+            const quarterLabel = currentQuarter.replace('Q', 'Q');
+            XLSX.writeFile(wb, `营销中心绩效评价表-${quarterLabel}-${date}.xlsx`);
+        }
+
+        // 导出选中员工的Excel汇总表
+        function exportSelectedToExcel() {
+            const selectedEmps = getSelectedEmployees();
+            if (selectedEmps.length === 0) {
+                alert('请先选择要导出的员工');
+                return;
+            }
+            
+            const data = selectedEmps.map((emp, index) => {
+                const months = emp.quarters[currentQuarter] || [{}, {}, {}];
+                const m1 = months[0] || {};
+                const m2 = months[1] || {};
+                const m3 = months[2] || {};
+                
+                const m1Total = (m1.score || 0) + (m1.bonus || 0) + (m1.deduct || 0);
+                const m2Total = (m2.score || 0) + (m2.bonus || 0) + (m2.deduct || 0);
+                const m3Total = (m3.score || 0) + (m3.bonus || 0) + (m3.deduct || 0);
+                const quarterTotal = ((m1Total + m2Total + m3Total) / 3).toFixed(2);
+                
+                return {
+                    '序号': index + 1,
+                    '岗位': emp.position,
+                    '姓名': emp.name,
+                    '首月-打分': m1.score || '',
+                    '首月-加分': m1.bonus || '',
+                    '首月-减分': m1.deduct || '',
+                    '次月-打分': m2.score || '',
+                    '次月-加分': m2.bonus || '',
+                    '次月-减分': m2.deduct || '',
+                    '末月-打分': m3.score || '',
+                    '末月-加分': m3.bonus || '',
+                    '末月-减分': m3.deduct || '',
+                    '季度总评分': quarterTotal
+                };
+            });
+            
+            const ws = XLSX.utils.json_to_sheet(data);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, '绩效评分表');
+            
+            ws['!cols'] = [
+                { wch: 6 }, { wch: 12 }, { wch: 10 },
+                { wch: 10 }, { wch: 10 }, { wch: 10 },
+                { wch: 10 }, { wch: 10 }, { wch: 10 },
+                { wch: 10 }, { wch: 10 }, { wch: 10 },
+                { wch: 12 }
+            ];
+            
+            const date = new Date().toISOString().slice(0, 7).replace('-', '');
+            const quarterLabel = currentQuarter.replace('Q', 'Q');
+            XLSX.writeFile(wb, `营销中心绩效评价表-选中员工-${quarterLabel}-${date}.xlsx`);
+        }
+
+        // ==================== V3.0 导出个人绩效确认单（Word格式）- 按季度 ====================
+        function exportPersonalConfirmation() {
+            // 只导出参与当前季度的员工
+            const quarterData = employees.filter(emp => 
+                emp.activeQuarters && emp.activeQuarters.includes(currentQuarter)
+            );
+            if (quarterData.length === 0) {
+                alert('暂无员工数据，请先添加员工并完成评分');
+                return;
+            }
+
+            // 检查是否有员工已完成评分
+            const scoredEmployees = quarterData.filter(emp => {
+                const months = emp.quarters[currentQuarter] || [{}, {}, {}];
+                const m1 = months[0] || {};
+                const m2 = months[1] || {};
+                const m3 = months[2] || {};
+                return m1.score || m2.score || m3.score;
+            });
+
+            if (scoredEmployees.length === 0) {
+                alert('暂无已评分的员工数据');
+                return;
+            }
+
+            exportEmployeesToZip(scoredEmployees, `绩效确认单-全部员工-${currentQuarter}.zip`);
+        }
+
+        // 导出选中员工的确认单（打包成zip）
+        function exportSelectedConfirmations() {
+            const selectedEmps = getSelectedEmployees();
+            if (selectedEmps.length === 0) {
+                alert('请先选择要导出的员工');
+                return;
+            }
+
+            // 检查是否有员工已完成评分
+            const scoredEmployees = selectedEmps.filter(emp => {
+                const months = emp.quarters[currentQuarter] || [{}, {}, {}];
+                const m1 = months[0] || {};
+                const m2 = months[1] || {};
+                const m3 = months[2] || {};
+                return m1.score || m2.score || m3.score;
+            });
+
+            if (scoredEmployees.length === 0) {
+                alert('选中的员工暂无已评分的数据');
+                return;
+            }
+
+            if (scoredEmployees.length < selectedEmps.length) {
+                alert(`已跳过 ${selectedEmps.length - scoredEmployees.length} 位未评分的员工`);
+            }
+
+            exportEmployeesToZip(scoredEmployees, `绩效确认单-选中员工-${currentQuarter}.zip`);
+        }
+
+        // 将员工确认单打包成zip导出
+        function exportEmployeesToZip(employeesToExport, zipFileName) {
+            const monthNames = ['首月', '次月', '末月'];
+            const currentDate = new Date().toLocaleDateString('zh-CN');
+            const quarterLabel = currentQuarter.replace('Q', '年第').replace(/(\d)$/, '$1季度');
+            
+            const zip = new JSZip();
+            let exportedCount = 0;
+
+            employeesToExport.forEach((emp) => {
+                const months = emp.quarters[currentQuarter] || [{}, {}, {}];
+                // 计算月度数据
+                let quarterTotalSum = 0;
+                let scoredMonthCount = 0;
+                const monthRows = months.map((month, idx) => {
+                    const m = month || {};
+                    const dimScore = m.score || 0;
+                    const bonus = m.bonus || 0;
+                    const deduct = m.deduct || 0;
+                    const monthTotal = dimScore + bonus + deduct;
+                    
+                    if (m.score) {
+                        quarterTotalSum += monthTotal;
+                        scoredMonthCount++;
+                    }
+                    
+                    return {
+                        month: monthNames[idx],
+                        dimScore: m.score ? dimScore.toFixed(2) : '未评分',
+                        bonus: bonus ? bonus.toFixed(2) : '0',
+                        deduct: deduct ? deduct.toFixed(2) : '0',
+                        bonusRemark: m.bonusRemark || '',
+                        deductRemark: m.deductRemark || '',
+                        monthTotal: m.score ? monthTotal.toFixed(2) : '未评分'
+                    };
+                });
+
+                const quarterAvg = scoredMonthCount > 0 ? (quarterTotalSum / scoredMonthCount).toFixed(2) : '未评分';
+
+                // 构建维度明细表格
+                let dimensionDetailsHTML = '';
+                const hasDimensionDetails = months.some(m => m && m.dimensionScores && m.dimensionScores.length > 0);
+                if (hasDimensionDetails) {
+                    const standardsData = standards[emp.position] || [];
+                    let detailsRows = '';
+                    months.forEach((month, monthIdx) => {
+                        if (month && month.dimensionScores) {
+                            month.dimensionScores.forEach((score, dimIdx) => {
+                                const dimName = standardsData[dimIdx] ? standardsData[dimIdx].dimension : `维度${dimIdx + 1}`;
+                                detailsRows += `
+                                    <tr>
+                                        <td style="border:1px solid #333;padding:6px;text-align:center;">${monthNames[monthIdx]}</td>
+                                        <td style="border:1px solid #333;padding:6px;">${dimName}</td>
+                                        <td style="border:1px solid #333;padding:6px;text-align:center;">${score || '未评'}</td>
+                                    </tr>
+                                `;
+                            });
+                        }
+                    });
+                    
+                    dimensionDetailsHTML = `
+                        <h3 style="font-size:14px;margin:20px 0 10px 0;">维度评分明细</h3>
+                        <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px;">
+                            <thead>
+                                <tr style="background:#f0f0f0;">
+                                    <th style="border:1px solid #333;padding:6px;width:15%;">月份</th>
+                                    <th style="border:1px solid #333;padding:6px;width:60%;">维度</th>
+                                    <th style="border:1px solid #333;padding:6px;width:25%;">得分</th>
+                                </tr>
+                            </thead>
+                            <tbody>${detailsRows}</tbody>
+                        </table>
+                    `;
+                }
+
+                // 构建备注内容
+                const remarks = monthRows
+                    .filter(r => r.bonusRemark || r.deductRemark)
+                    .map(r => {
+                        let text = `${r.month}：`;
+                        if (r.bonusRemark) text += `加分：${r.bonusRemark}；`;
+                        if (r.deductRemark) text += `减分：${r.deductRemark}；`;
+                        return text;
+                    })
+                    .join('<br>');
+                const remarksHTML = remarks ? `<div class="notes"><p><strong>备注：</strong></p><p>${remarks}</p></div>` : '';
+
+                // 构建 Word 文档 HTML
+                const wordContent = `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>绩效成绩确认单-${emp.name}</title>
+    <style>
+        body { font-family: "SimSun", "宋体", serif; font-size: 12pt; line-height: 1.6; }
+        .title { text-align: center; font-size: 18pt; font-weight: bold; margin-bottom: 20px; }
+        .info-table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
+        .info-table td { padding: 8px; border: none; }
+        .info-table .label { width: 15%; font-weight: bold; }
+        .info-table .value { width: 35%; border-bottom: 1px solid #333; }
+        .score-table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+        .score-table th, .score-table td { border: 1px solid #333; padding: 10px; text-align: center; }
+        .score-table th { background: #f5f5f5; font-weight: bold; }
+        .score-table .total-row { background: #e8f4e8; font-weight: bold; }
+        .signature-section { margin-top: 30px; }
+        .signature-row { display: flex; justify-content: space-between; margin: 25px 0; }
+        .signature-item { width: 45%; }
+        .signature-line { border-bottom: 1px solid #333; height: 30px; margin-top: 5px; }
+        .notes { margin-top: 30px; font-size: 10pt; color: #666; border-top: 1px solid #ccc; padding-top: 15px; }
+        .notes p { margin: 5px 0; }
+        @page { size: A4; margin: 2cm; }
+    </style>
+
+    
+</head>
+<body>
+    <div class="title">营销中心季度绩效成绩确认单</div>
+    
+    <table class="info-table">
+        <tr>
+            <td class="label">员工姓名：</td>
+            <td class="value">${emp.name}</td>
+            <td class="label">岗位：</td>
+            <td class="value">${emp.position}</td>
+        </tr>
+        <tr>
+            <td class="label">确认日期：</td>
+            <td class="value">${currentDate}</td>
+            <td class="label">季度：</td>
+            <td class="value">${quarterLabel}</td>
+        </tr>
+    </table>
+
+    <table class="score-table">
+        <thead>
+            <tr>
+                <th style="width:15%;">月份</th>
+                <th style="width:20%;">维度均分</th>
+                <th style="width:15%;">加分</th>
+                <th style="width:15%;">减分</th>
+                <th style="width:20%;">月度总分</th>
+                <th style="width:15%;">备注</th>
+            </tr>
+        </thead>
+        <tbody>
+            ${monthRows.map(r => `
+                <tr>
+                    <td>${r.month}</td>
+                    <td>${r.dimScore}</td>
+                    <td>${r.bonus}</td>
+                    <td>${r.deduct}</td>
+                    <td>${r.monthTotal}</td>
+                    <td>${r.bonusRemark || r.deductRemark ? (r.bonusRemark || '') + (r.bonusRemark && r.deductRemark ? '; ' : '') + (r.deductRemark || '') : ''}</td>
+                </tr>
+            `).join('')}
+            <tr class="total-row">
+                <td colspan="4" style="text-align:right;padding-right:20px;">季度总评分：</td>
+                <td>${quarterAvg}</td>
+                <td></td>
+            </tr>
+        </tbody>
+    </table>
+
+    ${dimensionDetailsHTML}
+
+    <div class="signature-section">
+        <h3 style="font-size:14px;margin-bottom:15px;">签字确认栏</h3>
+        
+        <table style="width:100%;border-collapse:collapse;">
+            <tr>
+                <td style="width:25%;padding:15px 0;vertical-align:bottom;">员工本人确认：</td>
+                <td style="width:25%;border-bottom:1px solid #333;"></td>
+                <td style="width:10%;"></td>
+                <td style="width:15%;padding:15px 0;vertical-align:bottom;">签字：</td>
+                <td style="width:25%;border-bottom:1px solid #333;"></td>
+            </tr>
+            <tr><td colspan="5" style="height:20px;"></td></tr>
+            <tr>
+                <td style="padding:15px 0;vertical-align:bottom;">直接上级确认：</td>
+                <td style="border-bottom:1px solid #333;"></td>
+                <td></td>
+                <td style="padding:15px 0;vertical-align:bottom;">签字：</td>
+                <td style="border-bottom:1px solid #333;"></td>
+            </tr>
+            <tr><td colspan="5" style="height:20px;"></td></tr>
+            <tr>
+                <td style="padding:15px 0;vertical-align:bottom;">部门负责人确认：</td>
+                <td style="border-bottom:1px solid #333;"></td>
+                <td></td>
+                <td style="padding:15px 0;vertical-align:bottom;">签字：</td>
+                <td style="border-bottom:1px solid #333;"></td>
+            </tr>
+        </table>
+    </div>
+
+    ${remarksHTML}
+
+    <!-- PWA 安装提示 -->
+    <div id="installPrompt" class="hidden fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-96 bg-white rounded-xl shadow-lg border border-gray-200 p-4 z-50 fade-in">
+        <div class="flex items-center gap-3">
+            <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center shrink-0">
+                <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
+                </svg>
+            </div>
+            <div class="flex-1">
+                <p class="font-medium text-gray-800">安装到桌面</p>
+                <p class="text-sm text-gray-500">添加到主屏幕，随时快速访问</p>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="dismissInstall()" class="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700">稍后</button>
+                <button onclick="installApp()" class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">安装</button>
+            </div>
+        </div>
+    </div>
+
+    \x3cscript\x3e
+        // Service Worker 注册
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/service-worker.js')
+                    .then(registration => {
+                        console.log('SW registered:', registration.scope);
+                    })
+                    .catch(error => {
+                        console.log('SW registration failed:', error);
+                    });
+            });
+        }
+
+        // PWA 安装提示
+        let deferredPrompt;
+        const installPrompt = document.getElementById('installPrompt');
+
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredPrompt = e;
+            // 显示安装提示（延迟3秒）
+            setTimeout(() => {
+                if (deferredPrompt && !localStorage.getItem('installDismissed')) {
+                    installPrompt.classList.remove('hidden');
+                }
+            }, 3000);
+        });
+
+        function installApp() {
+            if (deferredPrompt) {
+                deferredPrompt.prompt();
+                deferredPrompt.userChoice.then((choiceResult) => {
+                    if (choiceResult.outcome === 'accepted') {
+                        console.log('User accepted install');
+                    }
+                    deferredPrompt = null;
+                    installPrompt.classList.add('hidden');
+                });
+            }
+        }
+
+        function dismissInstall() {
+            installPrompt.classList.add('hidden');
+            localStorage.setItem('installDismissed', 'true');
+        }
+
+        // 检测是否已安装
+        window.addEventListener('appinstalled', () => {
+            installPrompt.classList.add('hidden');
+            deferredPrompt = null;
+            console.log('PWA installed');
+        });
+    <\/script>
+
+</body>
+</html>`;
+
+                // 将Word内容添加到zip
+                const fileName = `绩效确认单_${emp.name}_${currentQuarter}.doc`;
+                zip.file(fileName, '\ufeff' + wordContent);
+                exportedCount++;
+            });
+
+            // 生成并下载zip文件
+            zip.generateAsync({ type: 'blob' }).then(function(content) {
+                saveAs(content, zipFileName);
+                alert(`已导出 ${exportedCount} 份个人确认单到压缩包`);
+            });
+        }
+
+        // ==================== 导出数据（JSON） ====================
+        function exportToJSON() {
+            // 导出所有员工的评分数据
+            const quarterData = employees.filter(emp => 
+                emp.activeQuarters && emp.activeQuarters.includes(currentQuarter)
+            );
+            
+            if (quarterData.length === 0) {
+                alert('暂无数据可导出');
+                return;
+            }
+            
+            // 检查是否有任何评分数据
+            const hasData = quarterData.some(emp => {
+                return Object.values(emp.quarters || {}).some(months => 
+                    months.some(m => m && m.score)
+                );
+            });
+            
+            if (!hasData) {
+                alert('暂无已评分的员工数据，请先完成评分后再导出');
+                return;
+            }
+            
+            const exportData = {
+                version: 'V3.0',
+                exportDate: new Date().toISOString().slice(0, 10),
+                quarter: currentQuarter,
+                employees: []
+            };
+            
+            quarterData.forEach(emp => {
+                // 收集该员工所有季度的评分数据
+                Object.entries(emp.quarters || {}).forEach(([quarter, months]) => {
+                    months.forEach((month, idx) => {
+                        if (month && month.score) {
+                            exportData.employees.push({
+                                name: emp.name,
+                                position: emp.position,
+                                quarter: quarter,
+                                monthIndex: idx,
+                                score: month.score,
+                                bonus: month.bonus || 0,
+                                deduct: month.deduct || 0,
+                                bonusRemark: month.bonusRemark || '',
+                                deductRemark: month.deductRemark || '',
+                                dimensionScores: month.dimensionScores || []
+                            });
+                        }
+                    });
+                });
+            });
+            
+            if (exportData.employees.length === 0) {
+                alert('暂无已评分的员工数据');
+                return;
+            }
+            
+            const jsonStr = JSON.stringify(exportData, null, 2);
+            const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
+            const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+            saveAs(blob, `绩效数据-${currentQuarter}-${date}.json`);
+            
+            alert(`已导出 ${exportData.employees.length} 条评分记录`);
+        }
+
+        // ==================== 导入数据（JSON） ====================
+        function importFromJSON(file) {
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const importData = JSON.parse(e.target.result);
+                    
+                    if (!importData.employees || !Array.isArray(importData.employees)) {
+                        alert('数据格式不正确，请检查文件内容');
+                        return;
+                    }
+                    
+                    let importedCount = 0;
+                    let skippedCount = 0;
+                    let newCount = 0;
+                    const duplicates = [];
+                    
+                    importData.employees.forEach(record => {
+                        // 查找员工（按姓名匹配，需要先在系统中添加该员工）
+                        let emp = employees.find(e => e.name === record.name);
+                        
+                        if (!emp) {
+                            // 员工不存在，先创建
+                            emp = {
+                                id: 'emp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+                                name: record.name,
+                                position: record.position || '客服专员岗',
+                                activeQuarters: [record.quarter],
+                                quarters: {}
+                            };
+                            // 初始化所有季度
+                            ['2026Q2', '2026Q3', '2026Q4', '2027Q1', '2027Q2', '2027Q3', '2027Q4'].forEach(q => {
+                                emp.quarters[q] = [{}, {}, {}];
+                            });
+                            employees.push(emp);
+                            newCount++;
+                        } else {
+                            // 员工存在，检查是否已有该季度数据
+                            if (!emp.quarters) emp.quarters = {};
+                            if (!emp.quarters[record.quarter]) {
+                                emp.quarters[record.quarter] = [{}, {}, {}];
+                            }
+                            
+                            const existing = emp.quarters[record.quarter][record.monthIndex];
+                            if (existing && existing.score) {
+                                // 已有数据，标记为重复
+                                duplicates.push({
+                                    name: emp.name,
+                                    quarter: record.quarter,
+                                    monthIndex: record.monthIndex
+                                });
+                                skippedCount++;
+                            }
+                        }
+                        
+                        // 更新评分数据
+                        if (emp.quarters[record.quarter]) {
+                            emp.quarters[record.quarter][record.monthIndex] = {
+                                score: record.score,
+                                bonus: record.bonus || 0,
+                                deduct: record.deduct || 0,
+                                bonusRemark: record.bonusRemark || '',
+                                deductRemark: record.deductRemark || '',
+                                dimensionScores: record.dimensionScores || []
+                            };
+                            
+                            // 确保activeQuarters包含该季度
+                            if (!emp.activeQuarters) emp.activeQuarters = [];
+                            if (!emp.activeQuarters.includes(record.quarter)) {
+                                emp.activeQuarters.push(record.quarter);
+                            }
+                            
+                            importedCount++;
+                        }
+                    });
+                    
+                    // 保存到本地存储
+                    localStorage.setItem('performanceEmployees', JSON.stringify(employees));
+                    renderTable();
+                    
+                    // 显示导入结果
+                    let msg = `导入完成！\n`;
+                    msg += `- 新增员工：${newCount} 人\n`;
+                    msg += `- 更新记录：${importedCount} 条\n`;
+                    if (duplicates.length > 0) {
+                        msg += `- 跳过重复：${skippedCount} 条\n`;
+                        msg += `\n以下记录已有数据，未覆盖：\n`;
+                        duplicates.slice(0, 5).forEach(d => {
+                            const monthNames = ['首月', '次月', '末月'];
+                            msg += `- ${d.name} ${d.quarter} ${monthNames[d.monthIndex]}\n`;
+                        });
+                        if (duplicates.length > 5) {
+                            msg += `...及其他 ${duplicates.length - 5} 条`;
+                        }
+                    }
+                    alert(msg);
+                    
+                } catch (err) {
+                    alert('导入失败：' + err.message);
+                }
+            };
+            reader.readAsText(file);
+            
+            // 清空文件输入，允许重复选择同一文件
+            document.getElementById('importFileInput').value = '';
+        }
+    </script>
+</body>
+</html>
